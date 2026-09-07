@@ -15,7 +15,7 @@ The public repository is available at <https://github.com/OreoMuncher45/bitchord
 
 ## Modules
 
-- **Monochrome / Tidal-compatible**: an adapter for the JSON routes used by the existing Echo Monochrome client. It requires no account in the default configuration, but it is an independent service and is not affiliated with Tidal. The public `monochrome.tf` web route currently serves an HTML shell to generic requests, so verify the route/API availability before enabling this module in a release build.
+- **Monochrome / Tidal-compatible**: an adapter for Monochrome's API instances. It tries all eight API candidates listed by the upstream project and intentionally excludes UI-only hosts such as `monochrome.tf`. A `monochromeApiUrl` setting can be supplied by the host to prefer a specific API instance.
 - **Qobuz official API**: included as a credential-driven module scaffold. Set `QOBUZ_APP_ID`, `QOBUZ_APP_SECRET`, and a user session token in a private fork or a self-hosted module. Never commit credentials to a public repository.
 
 The Qobuz module intentionally does not implement subscription bypasses, credential harvesting, or DRM circumvention. Playback depends on a valid Qobuz account/session and the rights available to that account. Because BitChord's public module-index format does not provide a credential-settings UI, the Qobuz adapter is inert in the public index until you host it behind your own configured API gateway or extend BitChord's settings handling.

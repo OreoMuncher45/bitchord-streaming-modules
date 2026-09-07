@@ -6,7 +6,7 @@
       "author": "community",
       "version": "0.1.0",
       "type": "MODULE",
-      "description": "Search and playback through monochrome.tf; no account in the default configuration.",
+      "description": "Search and playback through Monochrome API instances with failover; no account in the default configuration.",
       "tags": ["TIDAL", "LOSSLESS", "FLAC", "NO LOGIN"],
       "download": "modules/monochrome-tidal.js",
       "trusted": false
