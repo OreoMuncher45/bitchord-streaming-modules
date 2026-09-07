@@ -1,0 +1,26 @@
+{
+  "category:music": [
+    {
+      "id": "monochrome-tidal",
+      "name": "Monochrome (Tidal-compatible)",
+      "author": "community",
+      "version": "0.1.0",
+      "type": "MODULE",
+      "description": "Search and playback through monochrome.tf; no account in the default configuration.",
+      "tags": ["TIDAL", "LOSSLESS", "FLAC", "NO LOGIN"],
+      "download": "modules/monochrome-tidal.js",
+      "trusted": false
+    },
+    {
+      "id": "qobuz-official",
+      "name": "Qobuz Official API",
+      "author": "community",
+      "version": "0.1.0",
+      "type": "MODULE",
+      "description": "Credential-driven Qobuz integration. Configure credentials in a private/self-hosted copy.",
+      "tags": ["QOBUZ", "LOSSLESS", "FLAC", "ACCOUNT REQUIRED"],
+      "download": "modules/qobuz-official.js",
+      "trusted": false
+    }
+  ]
+}

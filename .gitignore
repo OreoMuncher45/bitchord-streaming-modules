@@ -1,0 +1,4 @@
+*.local.json
+.env
+.idea/
+build/
