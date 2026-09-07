@@ -5,14 +5,13 @@ Community modules for BitChord `v1.5.2` and newer.
 ## Install
 
 1. Open **BitChord > Settings > Sources**.
-2. Add the raw GitHub URL for [`index.json`](./index.json).
+2. Add this raw GitHub URL for [`index.json`](./index.json):
+
+   <https://raw.githubusercontent.com/OreoMuncher45/bitchord-streaming-modules/main/index.json>
+
 3. BitChord detects the module index and loads the listed modules in its QuickJS sandbox.
 
-The raw URL after publishing is:
-
-```text
-https://raw.githubusercontent.com/OWNER/REPOSITORY/main/index.json
-```
+The public repository is available at <https://github.com/OreoMuncher45/bitchord-streaming-modules>.
 
 ## Modules
 
