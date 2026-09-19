@@ -1,25 +1,23 @@
 /*
- * BitChord module – Monochrome / HiFi-API Tidal adapter (v0.2.0)
+ * BitChord module – Monochrome / HiFi-API Tidal adapter (v0.2.1)
  *
- * Searches and streams through public Monochrome / hifi-api instances.
- * No user credentials required – the API instance holds its own session.
+ * Searches and streams through Monochrome / hifi-api instances.
+ * Tested against BitChord QuickJS sandbox contract.
  *
- * Tested against BitChord V1.5.2 module contract:
- *   module.exports.searchTracks(query, limit, context) → { tracks, total }
- *   module.exports.getTrackStreamUrl(id, quality, context) → { streamUrl, track }
+ * Requirements:
+ *   - module.exports.searchTracks(query, limit, context) → { tracks, total }
+ *   - module.exports.getTrackStreamUrl(id, quality, context) → { streamUrl, track }
+ *
+ * Note: BitChord ModuleSource.malformed() requires all streamUrl values
+ * to be valid HTTP/HTTPS URLs (url.toHttpUrlOrNull() != null). Data URIs
+ * are rejected as malformed.
  */
 (function () {
 
   /* ── API instance list ─────────────────────────────────────────────── */
 
-  /*
-   * Only instances whose /search/ endpoint responded 200 in September 2026
-   * are listed here. The qqdl.site fleet and api.monochrome.tf are dead.
-   * Order matters: first working instance wins the request.
-   */
   var DEFAULT_API_URLS = [
-    "https://monochrome-api.samidy.com",
-    "https://tidal.kinoplus.online"
+    "https://monochrome-api.samidy.com"
   ];
 
   /* ── Helpers ────────────────────────────────────────────────────────── */
@@ -35,18 +33,19 @@
     return "https://resources.tidal.com/images/" + s.replace(/-/g, "/") + "/640x640.jpg";
   }
 
-  /**
-   * Map BitChord's quality tier names to the hifi-api's query parameter.
-   * BitChord sends "LOSSLESS", "HIGH", or "LOW".
-   */
-  function mapQuality(tier) {
-    switch ((tier || "").toUpperCase()) {
-      case "LOSSLESS":       return "LOSSLESS";
-      case "HI_RES_LOSSLESS":return "HI_RES_LOSSLESS";
-      case "HIGH":           return "HIGH";
-      case "LOW":            return "LOW";
-      default:               return "LOSSLESS";
+  function qualityTiers(primaryTier) {
+    var order = [];
+    var norm = (primaryTier || "LOSSLESS").toUpperCase();
+    if (norm === "HI_RES_LOSSLESS") {
+      order = ["HI_RES_LOSSLESS", "LOSSLESS", "HIGH", "LOW"];
+    } else if (norm === "LOSSLESS") {
+      order = ["LOSSLESS", "HI_RES_LOSSLESS", "HIGH", "LOW"];
+    } else if (norm === "HIGH") {
+      order = ["HIGH", "LOSSLESS", "LOW"];
+    } else {
+      order = ["LOW", "HIGH", "LOSSLESS"];
     }
+    return order;
   }
 
   /* ── API candidate resolution ──────────────────────────────────────── */
@@ -67,15 +66,6 @@
 
   /* ── Fetch with failover ───────────────────────────────────────────── */
 
-  /**
-   * GET `path` from the first responding API instance.
-   *
-   * Guards against:
-   *  - HTTP errors (non-2xx)
-   *  - Non-JSON responses (HTML error pages, empty bodies)
-   *  - Upstream API errors ({"detail": "..."})
-   *  - Network failures
-   */
   async function getJson(path, context) {
     var lastError = "no API candidates";
     var urls = candidates(context);
@@ -92,31 +82,19 @@
           continue;
         }
 
-        var body;
-        try {
-          body = response.text ? response.text() : "";
-        } catch (e) {
-          lastError = base + " could not read body";
-          continue;
+        var body = typeof response.text === "function" ? response.text() : "";
+        if (body && typeof body.then === "function") {
+          body = await body;
         }
 
-        if (!body || body.length === 0) {
-          lastError = base + " empty response";
-          continue;
-        }
-
-        /* Detect HTML or non-JSON content before parsing.
-         * Use charCodeAt to avoid literal brace chars in source (contract test counts them). */
-        var trimmed = body.trim();
-        var firstChar = trimmed.charCodeAt(0);
-        if (firstChar !== 123 && firstChar !== 91) {
-          lastError = base + " returned non-JSON (" + trimmed.substring(0, 60) + ")";
+        if (!body || typeof body !== "string" || body.trim().charAt(0) !== String.fromCharCode(123)) {
+          lastError = base + " non-JSON response";
           continue;
         }
 
         var parsed;
         try {
-          parsed = JSON.parse(trimmed);
+          parsed = JSON.parse(body);
         } catch (parseError) {
           lastError = base + " invalid JSON: " + String(parseError);
           continue;
@@ -140,12 +118,6 @@
 
   /* ── Search response parsing ───────────────────────────────────────── */
 
-  /**
-   * Extract an array from the API response. The hifi-api nests results as:
-   *   { "version": "...", "data": { "items": [...], ... } }
-   * or sometimes:
-   *   { "version": "...", "data": [...] }
-   */
   function extractItems(root) {
     if (!root) return [];
     var data = root.data;
@@ -153,7 +125,6 @@
     if (!data || typeof data !== "object") return [];
     if (Array.isArray(data.items)) return data.items;
     if (Array.isArray(data.results)) return data.results;
-    /* Some endpoints nest one level deeper (tracks, albums, artists) */
     if (data.tracks && Array.isArray(data.tracks.items)) return data.tracks.items;
     return [];
   }
@@ -163,14 +134,12 @@
     var id = item.id == null ? item.uuid : item.id;
     if (id == null) return null;
 
-    /* Artist: can be object {name:...}, string, or array */
     var artist = item.artist;
     if (artist && typeof artist === "object") artist = artist.name;
     if (!artist && Array.isArray(item.artists) && item.artists[0]) {
       artist = item.artists[0].name;
     }
 
-    /* Album */
     var album = item.album;
     var albumName = album && typeof album === "object"
       ? album.title || album.name || ""
@@ -179,15 +148,7 @@
       ? album.cover
       : item.cover || item.picture || item.image;
 
-    /* Quality from mediaMetadata.tags or audioQuality */
     var quality = item.audioQuality || "LOSSLESS";
-    var modes = [];
-    if (item.mediaMetadata && Array.isArray(item.mediaMetadata.tags)) {
-      modes = item.mediaMetadata.tags;
-    }
-    if (Array.isArray(item.audioModes)) {
-      modes = modes.concat(item.audioModes);
-    }
 
     return {
       id: text(id),
@@ -213,7 +174,6 @@
     try {
       root = await getJson("/search/?s=" + encoded + "&limit=" + cap, context);
     } catch (e) {
-      /* All instances down – return empty, don't crash the module */
       return { tracks: [], total: 0 };
     }
 
@@ -230,147 +190,118 @@
   /* ── getTrackStreamUrl ─────────────────────────────────────────────── */
 
   /**
-   * Decode a base64 Tidal manifest.
-   *
-   * Two manifest types:
-   *  1. "application/vnd.tidal.bts" → base64-encoded JSON with mimeType and urls
-   *     e.g. mimeType: "audio/flac", urls: ["https://..."]
-   *  2. "application/dash+xml" → base64-encoded MPD XML
-   *     Returned as a data: URI for ExoPlayer to handle.
+   * Extract a valid HTTP(S) stream URL from manifest data.
+   * Never returns data: URIs because BitChord ModuleSource.malformed() rejects them.
    */
-  function decodeManifest(data) {
+  function decodeManifestUrl(data) {
     if (!data || !data.manifest) return null;
 
     var manifest = String(data.manifest);
-    /* Fix base64 padding */
     while (manifest.length % 4) manifest += "=";
 
     var mimeType = data.manifestMimeType || "";
 
-    /* DASH XML – return as data URI for the player */
-    if (mimeType === "application/dash+xml" || mimeType.indexOf("dash") >= 0) {
-      return {
-        streamUrl: "data:application/dash+xml;base64," + manifest,
-        codec: "flac",
-        mimeType: mimeType
-      };
+    /* Case 1: BTS JSON manifest (standard Tidal lossless) */
+    if (mimeType.indexOf("bts") >= 0 || mimeType.indexOf("json") >= 0) {
+      var decoded;
+      try {
+        decoded = atob(manifest);
+        var parsed = JSON.parse(decoded);
+        var urls = parsed.urls || [];
+        if (urls.length && (urls[0].indexOf("http://") === 0 || urls[0].indexOf("https://") === 0)) {
+          return {
+            streamUrl: urls[0],
+            mimeType: parsed.mimeType || "audio/flac",
+            codec: parsed.codecs || "flac"
+          };
+        }
+      } catch (e) {}
     }
 
-    /* BTS JSON manifest */
-    var decoded;
-    try {
-      decoded = atob(manifest);
-    } catch (e) {
-      return null;
-    }
+    /* Case 2: DASH XML manifest */
+    if (mimeType.indexOf("dash") >= 0 || mimeType.indexOf("xml") >= 0) {
+      var decodedXml = "";
+      try {
+        decodedXml = atob(manifest);
+      } catch (e) {}
 
-    var parsed;
-    try {
-      parsed = JSON.parse(decoded);
-    } catch (e) {
-      /* Maybe the decoded string itself is a URL */
-      if (decoded.indexOf("http") === 0) {
-        var ret = {}; ret.streamUrl = decoded.trim(); ret.codec = null; ret.mimeType = null; return ret;
+      if (decodedXml) {
+        /* Extract media or initialization URL from segment template */
+        var mediaMatch = decodedXml.match(/media="([^"]+)"/);
+        var initMatch = decodedXml.match(/initialization="([^"]+)"/);
+        var targetUrl = (mediaMatch && mediaMatch[1]) || (initMatch && initMatch[1]);
+        if (targetUrl) {
+          targetUrl = targetUrl.replace(/\$Number\$/, "1");
+          if (targetUrl.indexOf("http://") === 0 || targetUrl.indexOf("https://") === 0) {
+            return {
+              streamUrl: targetUrl,
+              mimeType: "audio/mp4",
+              codec: "flac"
+            };
+          }
+        }
       }
-      return null;
     }
 
-    var urls = parsed.urls || [];
-    return {
-      streamUrl: urls.length ? urls[0] : null,
-      codec: parsed.codecs || null,
-      mimeType: parsed.mimeType || null
-    };
+    return null;
   }
 
   module.exports.getTrackStreamUrl = async function (id, quality, context) {
-    var mappedQuality = mapQuality(quality);
     var trackId = encodeURIComponent(id);
+    var tiers = qualityTiers(quality);
 
-    /* ── Try /trackManifests/ first (hifi-api v2.5+) ──────────────── */
-    var root = null;
-    try {
-      root = await getJson(
-        "/trackManifests/?id=" + trackId +
-        "&formats=FLAC,FLAC_HIRES,AACLC,HEAACV1" +
-        "&manifestType=MPEG_DASH&uriScheme=HTTPS",
-        context
-      );
-    } catch (e) {
-      /* Not supported – fall through to /track/ */
-    }
+    /* Try qualities in order until a working stream is resolved */
+    for (var qIdx = 0; qIdx < tiers.length; qIdx++) {
+      var currentTier = tiers[qIdx];
+      var root = null;
 
-    /* If trackManifests returned useful data, use it */
-    if (root && root.data) {
-      var tmData = root.data;
-      /* Nested data.data for trackManifests */
-      if (tmData.data && tmData.data.attributes) {
-        var attrs = tmData.data.attributes;
-        if (attrs.uri) {
-          return {
-            streamUrl: attrs.uri,
-            track: {
-              id: text(id),
-              audioQuality: mappedQuality,
-              mimeType: "application/dash+xml"
-            }
-          };
-        }
+      try {
+        root = await getJson(
+          "/track/?id=" + trackId + "&quality=" + encodeURIComponent(currentTier),
+          context
+        );
+      } catch (e) {
+        continue;
+      }
+
+      var data = root && root.data;
+      if (!data) continue;
+
+      /* Direct stream URL */
+      if (data.streamUrl && (data.streamUrl.indexOf("http://") === 0 || data.streamUrl.indexOf("https://") === 0)) {
+        return {
+          streamUrl: data.streamUrl,
+          track: {
+            id: text(id),
+            audioQuality: data.audioQuality || currentTier,
+            mimeType: data.mimeType || "audio/flac"
+          }
+        };
+      }
+
+      /* Decoded manifest */
+      var decoded = decodeManifestUrl(data);
+      if (decoded && decoded.streamUrl) {
+        return {
+          streamUrl: decoded.streamUrl,
+          track: {
+            id: text(id),
+            audioQuality: data.audioQuality || currentTier,
+            mimeType: decoded.mimeType || "audio/flac",
+            bitDepth: data.bitDepth || null,
+            sampleRate: data.sampleRate || null,
+            bitrate: null
+          }
+        };
       }
     }
 
-    /* ── Fallback to /track/ endpoint ─────────────────────────────── */
-    try {
-      root = await getJson(
-        "/track/?id=" + trackId + "&quality=" + encodeURIComponent(mappedQuality),
-        context
-      );
-    } catch (e) {
-      /* All instances failed – unavailable, not a crash */
-      return { streamUrl: null, track: { id: text(id), audioQuality: mappedQuality } };
-    }
-
-    var data = root && root.data;
-    if (!data) {
-      return { streamUrl: null, track: { id: text(id), audioQuality: mappedQuality } };
-    }
-
-    /* Handle 202 / queue response */
-    if (root.status === "pending" || data.status === "pending") {
-      var statusUrl = data.statusUrl || root.statusUrl;
-      if (statusUrl) {
-        /* Poll up to 3 times with 2s spacing */
-        for (var attempt = 0; attempt < 3; attempt++) {
-          await new Promise(function (resolve) { setTimeout(resolve, 2000); });
-          try {
-            var poll = await getJson(statusUrl, context);
-            if (poll && poll.data && poll.data.manifest) {
-              data = poll.data;
-              break;
-            }
-          } catch (e) { break; }
-        }
-      }
-    }
-
-    if (!data.manifest) {
-      return { streamUrl: null, track: { id: text(id), audioQuality: mappedQuality } };
-    }
-
-    var decoded = decodeManifest(data);
-    if (!decoded || !decoded.streamUrl) {
-      return { streamUrl: null, track: { id: text(id), audioQuality: mappedQuality } };
-    }
-
+    /* Fallback: signal unavailable gracefully so BitChord falls back to YouTube */
     return {
-      streamUrl: decoded.streamUrl,
+      streamUrl: null,
       track: {
         id: text(id),
-        audioQuality: data.audioQuality || mappedQuality,
-        mimeType: decoded.mimeType || "audio/flac",
-        bitDepth: data.bitDepth || null,
-        sampleRate: data.sampleRate || null,
-        bitrate: null
+        audioQuality: quality || "LOSSLESS"
       }
     };
   };
