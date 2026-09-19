@@ -1,6 +1,6 @@
 # BitChord Streaming Modules
 
-Community modules for BitChord `v1.5.2` and newer.
+Community modules for [BitChord](https://github.com/kushagrasinghx/BitChord) `v1.5.2` and newer.
 
 ## Install
 
@@ -15,19 +15,54 @@ The public repository is available at <https://github.com/OreoMuncher45/bitchord
 
 ## Modules
 
-- **Monochrome / Tidal-compatible**: an adapter for Monochrome's API instances. It tries all eight API candidates listed by the upstream project and intentionally excludes UI-only hosts such as `monochrome.tf`. A `monochromeApiUrl` setting can be supplied by the host to prefer a specific API instance.
-- **Qobuz official API**: included as a credential-driven module scaffold. Set `QOBUZ_APP_ID`, `QOBUZ_APP_SECRET`, and a user session token in a private fork or a self-hosted module. Never commit credentials to a public repository.
+### Monochrome / Tidal-compatible
 
-The Qobuz module intentionally does not implement subscription bypasses, credential harvesting, or DRM circumvention. Playback depends on a valid Qobuz account/session and the rights available to that account. Because BitChord's public module-index format does not provide a credential-settings UI, the Qobuz adapter is inert in the public index until you host it behind your own configured API gateway or extend BitChord's settings handling.
+An adapter for Monochrome/HiFi-API instances that expose Tidal's catalogue without requiring the user's own Tidal credentials. The API instance holds its own session.
+
+**Features:**
+- Automatic failover across multiple API instances
+- Handles both `/trackManifests/` (v2.5+) and `/track/` endpoints
+- Supports DASH manifests (Hi-Res) and BTS JSON manifests (CD lossless)
+- Reports full track metadata (bitDepth, sampleRate, mimeType) to BitChord
+- Handles 202 queue responses from busy instances
+- Graceful degradation when all instances are down
+
+**API instances:** The module ships with known public instances. To prefer your own self-hosted hifi-api instance, set `monochromeApiUrl` in the module settings.
+
+> **Note:** Public Monochrome/HiFi-API instances are community-operated and can go offline without notice. As of September 2026, most of the original qqdl.site fleet is offline and some instances report "Upstream API error" on playback endpoints. Search continues to work. If playback fails, the module returns `streamUrl: null` and BitChord falls back to YouTube Music.
+
+### Qobuz Official API
+
+A credential-driven adapter for the Qobuz streaming API. This module is a scaffold — it is intentionally inert in the public index until configured with valid credentials.
+
+**Required settings** (configure via a private fork or self-hosted gateway):
+- `qobuzApiBase` — e.g. `https://www.qobuz.com/api.json/0.2`
+- `qobuzAppId` — Qobuz application ID
+- `qobuzUserAuthToken` — User session token
+
+This module does **not** implement subscription bypasses, credential harvesting, or DRM circumvention. Playback depends on a valid Qobuz account and the rights available to that account.
+
+## How it works
+
+BitChord's module system calls two JavaScript exports:
+
+1. **`searchTracks(query, limit, context)`** → `{ tracks: [...], total: N }`
+2. **`getTrackStreamUrl(id, quality, context)`** → `{ streamUrl: "...", track: { ... } }`
+
+When you play music in BitChord (including playlists), the app's `SourceResolver` substitutes each track individually — it searches the module for a matching track and, if found, fetches its stream URL. **Playlist browsing** (viewing a Tidal/Qobuz playlist directly) is not supported by the module interface; the modules work by matching individual tracks.
+
+The `quality` parameter uses BitChord's tier names: `LOSSLESS`, `HIGH`, or `LOW`. Modules map these to each service's own quality system internally.
 
 ## Compatibility
 
-The module format was verified against the current BitChord source at commit `70394304ee718d160cd25e41fbcbaef39c05b45c` (`V1.5.2`, September 6, 2026). BitChord runs each module as JavaScript and expects:
+The module format was verified against the current BitChord source at commit `70394304ee718d160cd25e41fbcbaef39c05b45c` (`V1.5.2`, September 6, 2026). The modules use only the sandbox-provided `fetch()` function and standard JavaScript.
 
-- `module.exports.searchTracks(query, limit, context)` returning `{ tracks: [...] }`
-- `module.exports.getTrackStreamUrl(id, quality, context)` returning `{ streamUrl, track }`
-
-The modules use only the sandbox-provided `fetch()` function.
+**Key BitChord expectations:**
+- Modules are wrapped in an IIFE that assigns to `module.exports`
+- `fetch()` is provided by BitChord's QuickJS sandbox (synchronous `.json()` and `.text()` methods)
+- The `context` argument carries `context.settings.<key>.value` for module configuration
+- `atob()` is polyfilled by BitChord for base64 decoding
+- Returning `{ streamUrl: null }` signals "unavailable" and triggers YouTube fallback
 
 ## Legal and operational notes
 
