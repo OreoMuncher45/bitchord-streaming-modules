@@ -1,7 +1,7 @@
 {
   "id": "bitchord-streaming-modules",
   "name": "BitChord Streaming Modules",
-  "version": "0.2.2",
+  "version": "0.3.0",
   "description": "Credentialless Tidal & Qobuz streaming modules for BitChord",
   "author": "community",
   "resources": [
@@ -20,7 +20,13 @@
       "code": 4,
       "type": "MODULE",
       "description": "Credentialless Tidal search and playback via Lucida/QQDL and Monochrome cluster with browser UA headers, endpoint rotation, and preview-aware tier failover.",
-      "tags": ["TIDAL", "LOSSLESS", "FLAC", "HI-RES", "NO LOGIN"],
+      "tags": [
+        "TIDAL",
+        "LOSSLESS",
+        "FLAC",
+        "HI-RES",
+        "NO LOGIN"
+      ],
       "download": "modules/monochrome-tidal.js",
       "trusted": false
     },
@@ -32,9 +38,35 @@
       "code": 4,
       "type": "MODULE",
       "description": "Credential-driven Qobuz adapter. Requires qobuzApiBase, qobuzAppId, and qobuzUserAuthToken to be configured via a private host or gateway.",
-      "tags": ["QOBUZ", "LOSSLESS", "FLAC", "HI-RES", "ACCOUNT REQUIRED"],
+      "tags": [
+        "QOBUZ",
+        "LOSSLESS",
+        "FLAC",
+        "HI-RES",
+        "ACCOUNT REQUIRED"
+      ],
       "download": "modules/qobuz-official.js",
       "trusted": false
+    },
+    {
+      "id": "bitchord-tidal-flac",
+      "name": "Tidal FLAC (tracks.monochrome.st)",
+      "author": "community",
+      "version": "0.3.0",
+      "code": 4,
+      "type": "MODULE",
+      "description": "Credentialless Tidal FLAC search and playback via tracks.monochrome.st, with per-host failover, a 4-byte fLaC signature check before any rendition is claimed, and retry on the CDN 520s this upstream returns intermittently. Replaces monochrome-tidal, whose eight hosts are all dead or auth-broken.",
+      "tags": [
+        "TIDAL",
+        "LOSSLESS",
+        "FLAC",
+        "NO LOGIN",
+        "NO ACCOUNT"
+      ],
+      "download": "modules/bitchord-tidal-flac.js",
+      "trusted": false,
+      "featured": true,
+      "lastUpdated": "2026-09-30"
     }
   ]
 }
