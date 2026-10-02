@@ -63,46 +63,117 @@
 (function () {
   'use strict';
 
-  /** Tried in order. Duplicates cost nothing; the failure path is what matters. */
-  var DEFAULT_BASE_URLS = [
-    'https://tracks.monochrome.st',
-    'https://tracks.monochrome.st',
-    'https://api.monochrome.tf',
-    'https://monochrome-api.samidy.com',
-    'https://wolf.qqdl.site',
-    'https://maus.qqdl.site',
-    'https://vogel.qqdl.site',
-    'https://katze.qqdl.site',
-    'https://hund.qqdl.site',
-    'https://hifi.geeked.wtf'
-  ];
+  /**
+   * Candidates, in order.
+   *
+   * Deliberately ONE host, and that is a measured decision rather than a
+   * simplification. Every other host in this ecosystem was checked on
+   * 2 October 2026 and is unusable:
+   *
+   *   api.monochrome.tf          DNS does not resolve
+   *   hifi.geeked.wtf            DNS does not resolve
+   *   if-it-runs-ship-it.lol     DNS does not resolve
+   *   lossless.wtf               DNS does not resolve
+   *   api2.monochrome.st         DNS does not resolve
+   *   monochrome-api.samidy.com  answers, but 404s this API and 401s its search
+   *   wolf/hund.qqdl.site        TLS handshake hangs past 6s
+   *   maus/vogel/katze.qqdl.site TLS handshake fails
+   *
+   * Walking that list was costing 75 seconds before it reached a verdict, which
+   * is most of the minute-long upgrade this module was shipped to fix. Two of
+   * those hosts hang rather than refuse, so each one burns a full timeout per
+   * attempt. BitChord abandons a search at `ModuleSource.SEARCH_BUDGET_MS` = 8s
+   * and only waits for the patient path at 25s, so a walk this long guaranteed
+   * the listener heard nothing and then a fallback.
+   *
+   * So the primary host is asked once, hard, and `preferredBaseUrl` is the way
+   * to point it somewhere else. A host that is merely slow now costs 3.5s
+   * instead of 31s, and a host that is dead costs the same 3.5s rather than 31s.
+   */
+  var DEFAULT_BASE_URLS = ['https://tracks.monochrome.st'];
 
   var UA =
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ' +
     '(KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36';
 
-  var SEARCH_TIMEOUT_MS = 12000;
-  var STREAM_TIMEOUT_MS = 10000;
-
   /**
-   * How long a host that failed is skipped.
+   * Timeouts, sized against the upstream's behaviour today rather than a guess.
    *
-   * Short on purpose. The failure being guarded against is usually a CDN in
-   * front of one returning 520 for a moment, not a host being down — and 120
-   * seconds turned that single blip into a two-minute outage during which every
-   * attempt was skipped before it was ever tried.
+   * `ModuleSource.SEARCH_BUDGET_MS` is 8s and `SEARCH_PATIENT_MS` is 25s, so a
+   * search that overruns 8s loses its first chance at the track and waits for the
+   * patient pass — the difference between swapping inside a second and swapping
+   * after the listener has sat there a minute.
+   *
+   * Measured on 2 October 2026. The upstream is materially slower than when this
+   * module was first written, which is why these are not the numbers that were
+   * tuned on 30 September:
+   *
+   *   search            0.9 - 2.1s   (median 1.16s)
+   *   signature probe   0.6 - 3.4s   (was ~0.4s five days ago)
+   *
+   * So the probe is the binding constraint rather than the search. 4.5s sits just
+   * above the slowest probe observed, which is the point: a timeout shorter than
+   * the normal case would fail tracks that were going to work anyway.
    */
-  var HOST_COOLDOWN_MS = 30000;
+  var SEARCH_TIMEOUT_MS = 5000;
+  var STREAM_TIMEOUT_MS = 4500;
 
   /**
-   * How many times one host is asked before it is blamed.
+   * How long a host that failed is skipped — but only when there is somewhere
+   * else to go.
    *
-   * Measured against the live CDN: three of four consecutive reads on the same
-   * URL returned `206` with a `fLaC` signature and the fourth returned `520` with
-   * an HTML error page. One retry is the difference between that being invisible
-   * and it failing the track.
+   * This is not a timeout that was tuned, it is a mechanism that had to be
+   * almost switched off, and the reason is worth keeping in mind for anyone
+   * adding a second host back.
+   *
+   * A cooldown means "this host is not worth asking again yet", which is only
+   * useful when there is another one. With a single host it is actively harmful,
+   * because "skip" becomes "return nothing" — and because a skipped search
+   * returns in about a millisecond, the requests behind it are all issued inside
+   * the cooldown window and all get skipped too. One 520 does not cost one
+   * track; it costs every track until the window closes.
+   *
+   * Measured directly: a 20-track soak where one track failed gave 2 FLAC
+   * upgrades and 17 instant misses, then repeated with the same result after the
+   * window was shortened from 30s to 2.5s — because the soak runs faster than
+   * any cooldown. `hostIsCooling` therefore refuses to skip the last candidate,
+   * and the failure is paid for by `STREAM_ATTEMPTS` instead, which costs the
+   * same round trips and cannot spread.
+   */
+  var HOST_COOLDOWN_MS = 2500;
+
+  /**
+ * How many times one host is asked before it is blamed.
+   *
+   * Three, and the reason it is three rather than two is the success rate it
+   * buys. The CDN in front of this catalogue fails 10-25% of signature probes,
+   * measured across two separate samples today:
+   *
+   *   attempts   at 10% failure   at 25% failure
+   *        1            90.0%              75.0%
+   *        2            99.0%              93.8%
+   *        3            99.9%              98.4%
+   *
+   * Two attempts still loses one track in sixteen at the pessimistic end, which
+   * over a playlist is several tracks a session that never upgrade. Three costs
+   * 11.7s worst case, and that fits the 25s patient budget comfortably — so the
+   * trade is 4.3s of patience for the last few percent, and the patience is
+   * being spent in the background while the track plays at 128kbps anyway.
+   *
+   * The old setting was 3 attempts at a **10s** timeout, which was 31s on its
+   * own before any fallback host was considered. That is what made an upgrade
+   * take a minute.
    */
   var STREAM_ATTEMPTS = 3;
+
+  /**
+   * How many times a search is retried on the same host.
+   *
+   * Two, for the reason in `searchAcrossHosts`: a burst of lookups sometimes
+   * pushes a query past the timeout that it comfortably beats when asked on its
+   * own. Two attempts is 10.5s, inside the patient budget.
+   */
+  var SEARCH_ATTEMPTS = 2;
 
   /** baseUrl -> epoch ms until which it is skipped. */
   var hostCooldowns = {};
@@ -147,7 +218,19 @@
     return list;
   }
 
-  function hostIsCooling(base) {
+  /**
+   * Whether `base` should be skipped right now.
+   *
+   * `candidates` is the list actually being walked, and the last entry is never
+   * skipped. That single condition is what stops a CDN blip from becoming a dead
+   * session: with one host there is nothing to cool down toward, so asking it
+   * again is always at least as good as returning nothing. See the note on
+   * HOST_COOLDOWN_MS for the measurement that made this necessary.
+   */
+  function hostIsCooling(base, candidates) {
+    if (candidates && candidates.length && candidates[candidates.length - 1] === base) {
+      return false;
+    }
     var until = hostCooldowns[base];
     return !!until && until > Date.now();
   }
@@ -246,27 +329,47 @@
    * real answer — and trying the next host would only turn a miss into a slower
    * miss.
    */
+  /**
+   * Walks the host list until one answers, retrying the one that does not.
+   *
+   * The retry is here for a measured reason. A cold search of this catalogue is
+   * 0.8-1.3s, but under a burst of consecutive lookups the same query sometimes
+   * takes over 5s and answers nothing at all inside the timeout. A 20-track soak
+   * lost 3 tracks to exactly that — three queries that return 8, 1 and 7 rows
+   * when asked directly, but that arrived after this function had already given
+   * up. Without a retry a slow second costs the whole track; with it, the second
+   * attempt is what usually lands.
+   *
+   * Two attempts at 5s is 10.5s worst case, which fits inside BitChord's 25s
+   * patient budget. That is the budget that matters here: the lossless upgrade is
+   * a background pass over a track already playing, not the initial
+   * substitution, so it is allowed to be slow — it just is not allowed to be
+   * minute-slow.
+   */
   function searchAcrossHosts(query, limit, context) {
     var urls = baseUrls(context);
 
-    function attempt(index) {
+    function tryHost(index, attemptNumber) {
       if (index >= urls.length) return Promise.resolve({ base: null, payload: { tracks: [] } });
 
       var base = urls[index];
-      if (hostIsCooling(base)) return attempt(index + 1);
+      if (hostIsCooling(base, urls)) return tryHost(index + 1, attemptNumber);
 
       return searchOn(base, query, limit).then(
-        function (payload) {
-          return { base: base, payload: payload };
-        },
+        function (payload) { return { base: base, payload: payload }; },
         function () {
+          if (attemptNumber < SEARCH_ATTEMPTS) {
+            return delay(400 * attemptNumber).then(function () {
+              return tryHost(index, attemptNumber + 1);
+            });
+          }
           coolDown(base);
-          return attempt(index + 1);
+          return tryHost(index + 1, 1);
         }
       );
     }
 
-    return attempt(0);
+    return tryHost(0, 1);
   }
 
   /** Tidal reports milliseconds; the module contract wants seconds. */
@@ -420,10 +523,16 @@
     var hinted = bar > 0 ? raw.slice(0, bar) : null;
     var id = bar > 0 ? raw.slice(bar + 1) : raw;
 
-    // The host the row came from goes first, but it is not the only candidate.
-    // Treating it as the only one means a single 520 on the preferred host returns
-    // nothing at all, when another live host might have served the same
-    // catalogue moments later.
+    // The host the row came from goes first, then the configured list.
+    //
+    // Deliberately NOT given a second chance on a fresh request. BitChord caches
+    // this answer for `ModuleManager`'s stream TTL and a caller that misses
+    // simply moves to the next source, so a fast `null` is worth more here than
+    // a slow `url`: the difference between a track swapping within a second and
+    // a track waiting out a patient budget is one HTTP round trip either way.
+    //
+    // The default list holds a single host, so this walk is short by construction
+    // and cannot be lengthened by hosts that all turn out to be dead.
     var urls = baseUrls(context);
     var ordered;
     if (hinted) {
@@ -443,7 +552,7 @@
         return { streamUrl: null, track: { id: id, audioQuality: '' } };
       }
       var base = ordered[index];
-      if (hostIsCooling(base)) return attempt(index + 1);
+      if (hostIsCooling(base, ordered)) return attempt(index + 1);
 
       return streamOn(base, id, upstreamQuality).then(
         function (result) { return result; },
