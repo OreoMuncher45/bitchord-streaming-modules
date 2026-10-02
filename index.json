@@ -1,8 +1,8 @@
 {
   "id": "bitchord-streaming-modules",
   "name": "BitChord Streaming Modules",
-  "version": "0.3.0",
-  "description": "Credentialless Tidal & Qobuz streaming modules for BitChord",
+  "version": "0.4.0",
+  "description": "Credentialless Tidal FLAC streaming module for BitChord. No account or token.",
   "author": "community",
   "resources": [
     "search",
@@ -12,42 +12,6 @@
     "music"
   ],
   "category:music": [
-    {
-      "id": "monochrome-tidal",
-      "name": "Monochrome (Tidal-compatible)",
-      "author": "community",
-      "version": "0.2.2",
-      "code": 4,
-      "type": "MODULE",
-      "description": "Credentialless Tidal search and playback via Lucida/QQDL and Monochrome cluster with browser UA headers, endpoint rotation, and preview-aware tier failover.",
-      "tags": [
-        "TIDAL",
-        "LOSSLESS",
-        "FLAC",
-        "HI-RES",
-        "NO LOGIN"
-      ],
-      "download": "modules/monochrome-tidal.js",
-      "trusted": false
-    },
-    {
-      "id": "qobuz-official",
-      "name": "Qobuz Official API",
-      "author": "community",
-      "version": "0.2.2",
-      "code": 4,
-      "type": "MODULE",
-      "description": "Credential-driven Qobuz adapter. Requires qobuzApiBase, qobuzAppId, and qobuzUserAuthToken to be configured via a private host or gateway.",
-      "tags": [
-        "QOBUZ",
-        "LOSSLESS",
-        "FLAC",
-        "HI-RES",
-        "ACCOUNT REQUIRED"
-      ],
-      "download": "modules/qobuz-official.js",
-      "trusted": false
-    },
     {
       "id": "bitchord-tidal-flac",
       "name": "Tidal FLAC (tracks.monochrome.st)",
