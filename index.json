@@ -1,7 +1,7 @@
 {
   "id": "bitchord-streaming-modules",
   "name": "BitChord Streaming Modules",
-  "version": "0.4.0",
+  "version": "0.3.0",
   "description": "Credentialless Tidal FLAC streaming module for BitChord. No account or token.",
   "author": "community",
   "resources": [
