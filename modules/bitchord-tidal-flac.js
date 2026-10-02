@@ -419,6 +419,77 @@
     return rows;
   }
 
+  /**
+ * Words that carry no meaning for a match.
+   *
+   * Stripped from both sides of a comparison. Everything here is a filler word
+   * that survives in a Tidal title or an artist credit and would otherwise make
+   * two records of the same song look like different songs.
+   */
+  var STOPWORDS = [
+    'the', 'a', 'an', 'and', 'or', 'but', 'if', 'of', 'to', 'in', 'on', 'at',
+    'by', 'for', 'from', 'with', 'into', 'over', 'under', 'is', 'it', 'its',
+    'as', 'that', 'this', 'these', 'those', 'be', 'am', 'are', 'was', 'were',
+    'my', 'me', 'we', 'you', 'your', 'i',
+    // Filler that ride along in Tidal artist credits.
+    'feat', 'featuring', 'ft', 'with', 'remix', 'remixed'
+  ];
+
+  /**
+   * Lowercases, strips punctuation, and removes stopwords.
+   *
+   * The result is a comparable "core" for two titles. It is a rough
+   * normalisation rather than a linguistically correct one, and it does not need
+   * to be: it is only used to notice that a catalogue row is about a different
+   * song entirely, where being approximately right in either direction is fine.
+   * False positives here are harmless (BitChord still scores the rows it is
+   * given); false negatives are the expensive case.
+   */
+  function core(value) {
+    var words = String(value == null ? '' : value).toLowerCase().split(/[^a-z0-9]+/);
+    var kept = [];
+    for (var i = 0; i < words.length; i++) {
+      var word = words[i];
+      if (!word) continue;
+      if (STOPWORDS.indexOf(word) >= 0) continue;
+      // A bare "ft" with nothing after it is an artifact of splitting.
+      if (word.length < 2 && !/[0-9]/.test(word)) continue;
+      kept.push(word);
+    }
+    return kept.join(' ');
+  }
+
+  /**
+   * Words from the query, minus anything that looks like an artist name.
+   *
+   * BitChord queries with "Artist Title", so the title has to be guessed out of
+   * a flat string. The strategy is deliberately conservative: it only strips a
+   * leading token when that token is *also* the credited artist of a row we got
+   * back. That way "The Red" is still looked for inside "Chevelle The Red",
+   * while a title that genuinely starts with the artist's own name — "Chevelle"
+   * the song, or "Guardian" by The Chemical Brothers — is not stripped away.
+   *
+   * Returns null when no title can be identified, which means the caller should
+   * keep every row rather than filter on nothing.
+   */
+  function titleHints(query, rows) {
+    var words = String(query == null ? '' : query).trim().split(/\s+/);
+    if (words.length < 2) return null;
+
+    var first = words[0];
+    var artistNames = {};
+    for (var i = 0; i < rows.length; i++) {
+      var parts = String(rows[i].artistNames == null ? '' : rows[i].artistNames).toLowerCase().split(',');
+      for (var p = 0; p < parts.length; p++) {
+        var name = parts[p].trim();
+        if (name) artistNames[name] = true;
+      }
+    }
+
+    if (artistNames[first.toLowerCase()]) return words.slice(1).join(' ').trim();
+    return null;
+  }
+
   function searchTracks(query, limit, context) {
     var text = String(query == null ? '' : query).trim();
     if (!text) return { tracks: [], total: 0 };
@@ -427,8 +498,40 @@
 
     return searchAcrossHosts(text, capped, context).then(function (found) {
       if (!found.base) return { tracks: [], total: 0 };
-      var rows = toRows((found.payload && found.payload.tracks) || [], found.base);
-      return { tracks: rows, total: rows.length };
+
+      var raw = (found.payload && found.payload.tracks) || [];
+      var rows = toRows(raw, found.base);
+
+      // The fix for a spinner that never stops.
+      //
+      // A Tidal search for a title it does not have still answers — with that
+      // artist's *other* songs. Measured: "Chevelle Hella Racer" returns 7 rows,
+      // every one of them a different Chevelle track, because Hella Racer is
+      // simply not in the catalogue. BitChord sees a non-empty result, decides
+      // this source has an answer, and starts waiting — and then
+      // `TrackMatcher.score` rejects every row on `wanted.core != got.core`, so
+      // nothing plays and the spinner runs until the budget expires.
+      //
+      // That is the difference between a track that fails in a second and one
+      // that fails in thirty. An empty answer makes BitChord give up on this
+      // module immediately (`first.complete(Unit)` never fires, and the source
+      // is struck off) instead of waiting out `SEARCH_PATIENT_MS`.
+      //
+      // The filter is only applied when a title can be identified, so a query
+      // that is just an artist name keeps every row it got.
+      var hints = titleHints(text, raw);
+      if (!hints) return { tracks: rows, total: rows.length };
+
+      var wanted = core(hints);
+      if (!wanted) return { tracks: rows, total: rows.length };
+
+      var kept = [];
+      for (var i = 0; i < rows.length; i++) {
+        var have = core(rows[i].title);
+        if (!have) continue;
+        if (have.indexOf(wanted) >= 0 || wanted.indexOf(have) >= 0) kept.push(rows[i]);
+      }
+      return { tracks: kept, total: kept.length };
     });
   }
 
