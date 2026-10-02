@@ -111,12 +111,24 @@
    *   search            0.9 - 2.1s   (median 1.16s)
    *   signature probe   0.6 - 3.4s   (was ~0.4s five days ago)
    *
-   * So the probe is the binding constraint rather than the search. 4.5s sits just
-   * above the slowest probe observed, which is the point: a timeout shorter than
-   * the normal case would fail tracks that were going to work anyway.
+   * So the probe is the binding constraint rather than the search.
+   *
+   * 6s each, and the reasoning here is asymmetric. Tightening these from 4.5s to
+   * 3.5s looked prudent and cost a quarter of the upgrade rate, because a probe
+   * that legitimately takes 3.4s then had no room left and got cut off. A
+   * timeout has to clear the *slowest normal* case, not the average one, so this
+   * sits at roughly twice the slowest thing actually observed.
+   *
+   * What makes a 6s timeout affordable is that it now fires at most once each —
+   * see `retry`, which no longer re-asks after a timeout. One 6s search plus one
+   * 6s probe is 12s against a genuinely dead link, inside BitChord's 25s patient
+   * budget, and it is not multiplied by a retry count. The configuration this
+   * replaced was 2x4s plus 3x3.5s — 18.5s of waiting on the same dead link, and
+   * the direct cause of the 30-second and 47-second upgrades reported on a phone
+   * whose connection could not sustain it.
    */
-  var SEARCH_TIMEOUT_MS = 5000;
-  var STREAM_TIMEOUT_MS = 4500;
+  var SEARCH_TIMEOUT_MS = 6000;
+  var STREAM_TIMEOUT_MS = 6000;
 
   /**
    * How long a host that failed is skipped — but only when there is somewhere
@@ -318,7 +330,13 @@
     return getJson(
       base + '/search/tracks?q=' + encodeURIComponent(query) + '&limit=' + encodeURIComponent(String(limit)),
       SEARCH_TIMEOUT_MS
-    );
+    ).catch(function (error) {
+      // Carries the same retryable flag as the stream path so `tryHost` can tell
+      // a CDN 520 — worth asking again — from a timeout on a slow link, which is
+      // not.
+      error.retryable = /HTTP 5/.test(error.message);
+      throw error;
+    });
   }
 
   /**
@@ -357,9 +375,13 @@
 
       return searchOn(base, query, limit).then(
         function (payload) { return { base: base, payload: payload }; },
-        function () {
-          if (attemptNumber < SEARCH_ATTEMPTS) {
-            return delay(400 * attemptNumber).then(function () {
+        function (failure) {
+          // Only a fast failure is worth a second ask. A timeout means the link is slow
+          // right now, and spending the timeout again just multiplies the wait —
+          // which is how one search became 10s on a mobile connection and put the
+          // whole upgrade past BitChord's 8s grace budget.
+          if (attemptNumber < SEARCH_ATTEMPTS && failure.retryable !== false) {
+            return delay(300 * attemptNumber).then(function () {
               return tryHost(index, attemptNumber + 1);
             });
           }
@@ -559,7 +581,14 @@
         headers: { 'User-Agent': UA, Accept: '*/*', Range: 'bytes=0-3' }
       }).then(
         function (resp) {
-          if (!resp.ok) throw new Error('HTTP ' + resp.status);
+          // A 5xx is worth another ask: the CDN in front of this catalogue
+          // returns 520 on roughly one request in five and the next one usually
+          // works. Anything else is a real answer and is taken at face value.
+          if (!resp.ok) {
+            var err = new Error('HTTP ' + resp.status);
+            err.retryable = resp.status >= 500;
+            throw err;
+          }
           return bodyOf(resp).then(function (body) {
             if (body.length > 8) throw new Error('range ignored (' + body.length + ' bytes)');
             if (body.indexOf('fLaC') !== 0) throw new Error('no fLaC signature');
@@ -567,19 +596,45 @@
           });
         },
         function (error) {
-          throw new Error('transport: ' + error.message);
+          // A timeout, a DNS failure, a refused connection. None of these get
+          // better by asking again immediately — see the note on `retry`.
+          var err = new Error('transport: ' + error.message);
+          err.retryable = false;
+          throw err;
         }
       );
     }
 
+    /**
+     * Retries only what retrying can fix.
+     *
+     * The distinction is between an answer that came back wrong and no answer at
+     * all, and it is the whole reason this function is not simply "try N times":
+     *
+     *   - A 520 from the CDN is a real, fast failure of a host that is up.
+     *     Retrying costs one round trip and usually lands.
+     *   - A timeout means this request is slow *right now*. Retrying does not
+     *     make the link faster — it just spends the timeout again, so a slow
+     *     connection pays the full budget once per attempt and the total scales
+     *     with the retry count.
+     *
+     * That second case is what turns a slow mobile link into a 30-second
+     * upgrade: 2 search attempts at 5s plus 3 stream attempts at 4.5s is 24s of
+     * pure waiting, before BitChord has even decided whether to try again itself.
+     * On a fast link none of those timeouts fire and the retries cost nothing,
+     * which is exactly why the problem looked like network flakiness rather than
+     * like arithmetic.
+     *
+     * So: timeouts and transport errors fail immediately, and only a 5xx is
+     * worth a second ask.
+     */
     function retry(attemptNumber) {
       return once().catch(function (error) {
-        if (attemptNumber >= STREAM_ATTEMPTS) {
+        var worthRetrying = error.retryable !== false;
+        if (!worthRetrying || attemptNumber >= STREAM_ATTEMPTS) {
           return { verified: false, reason: error.message };
         }
-        // Linear and short. The failures being ridden out last about a second,
-        // so a longer backoff would be waiting on a blip that has already gone.
-        return delay(400 * attemptNumber).then(function () {
+        return delay(300 * attemptNumber).then(function () {
           return retry(attemptNumber + 1);
         });
       });
