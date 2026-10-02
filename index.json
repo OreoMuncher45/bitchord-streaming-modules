@@ -1,7 +1,7 @@
 {
   "id": "bitchord-streaming-modules",
   "name": "BitChord Streaming Modules",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Credentialless Tidal FLAC streaming module for BitChord. No account or token.",
   "author": "community",
   "resources": [
@@ -16,7 +16,7 @@
       "id": "bitchord-tidal-flac",
       "name": "Tidal FLAC (tracks.monochrome.st)",
       "author": "community",
-      "version": "0.3.0",
+      "version": "0.4.0",
       "code": 4,
       "type": "MODULE",
       "description": "Credentialless Tidal FLAC search and playback via tracks.monochrome.st, with per-host failover, a 4-byte fLaC signature check before any rendition is claimed, and retry on the CDN 520s this upstream returns intermittently. Replaces monochrome-tidal, whose eight hosts are all dead or auth-broken.",
