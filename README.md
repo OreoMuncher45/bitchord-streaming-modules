@@ -59,15 +59,18 @@ BitChord does not browse external Tidal/Qobuz playlists natively. Instead, BitCh
 
 ## Included Modules
 
-### 1. Monochrome / Tidal-compatible (`monochrome-tidal`)
-- **Credentialless:** Connects to public Monochrome/HiFi-API instances that hold their own sessions.
-- **Failover:** Rotates through known healthy endpoints.
-- **Playback Formats:** Parses both MPEG-DASH manifests (Hi-Res) and BTS base64 manifests (FLAC lossless).
-- **Graceful degradation:** If an instance returns upstream errors or 503s, returns `{ streamUrl: null }` so playback never hangs.
+### 1. Tidal FLAC via tracks.monochrome.st (`bitchord-tidal-flac`)
+- **Credentialless:** Public read-only Tidal index. No account, no token.
+- **Stream:** Direct `/track/{id}?quality=LOSSLESS` proxy URL, claimed only after a 4-byte `fLaC` Range-probe check.
+- **Timeouts:** 6s search / 6s probe, retried only on fast 5xx — timeouts fail fast so one slow link never becomes a 30s upgrade.
+- **Holds:** Studio masters, including niche shoegaze (Pure Hex studio, Porch Light band, Whirr, Glixen, Fleshwater — verified Oct 2026).
 
-### 2. Qobuz Official API (`qobuz-official`)
-- Modular scaffold for official Qobuz API integration.
-- Inert by default; activates when `qobuzApiBase`, `qobuzAppId`, and `qobuzUserAuthToken` are provided via settings.
+### 2. Internet Archive FLAC (`archive-flac`)
+- **Credentialless:** Public `advancedsearch.php` + `metadata/{id}` + `/download/{id}/{file}`. No account, no token.
+- **Stream:** Direct `archive.org/download` URL, same 4-byte `fLaC` check. Range probes answer in ~0.4s vs ~3.8s for the Tidal proxy.
+- **Search:** One query + parallel fan-out over 4 items (~1.5-4.7s measured). Free-text relevance ranking — fielded queries go to zero on "Artist Title" flat strings.
+- **Holds:** Live tapes and bootlegs Tidal never will (Pure Hex 2022-2023 SF lives incl. "02 Still Dark", Slowdive 1993-2023 lives). Studio Porch Light is a Tidal-only miss here — by design the two modules race and cover each other.
+- **App fit:** BitChord races every module in the index at once (`ModuleSource` 8s live / 25s patient budgets, round-robin interleave). Two hosts failing differently beats one host retried: when Tidal hangs past 10s, Archive wins the live budget, and vice versa.
 
 ---
 

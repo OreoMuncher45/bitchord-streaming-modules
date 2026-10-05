@@ -1,8 +1,8 @@
 {
   "id": "bitchord-streaming-modules",
   "name": "BitChord Streaming Modules",
-  "version": "0.4.0",
-  "description": "Credentialless Tidal FLAC streaming module for BitChord. No account or token.",
+  "version": "0.5.0",
+  "description": "Credentialless FLAC streaming modules for BitChord. No account or token.",
   "author": "community",
   "resources": [
     "search",
@@ -31,6 +31,27 @@
       "trusted": false,
       "featured": true,
       "lastUpdated": "2026-10-02"
+    },
+    {
+      "id": "archive-flac",
+      "name": "Internet Archive FLAC (archive.org)",
+      "author": "community",
+      "version": "1.0.0",
+      "code": 4,
+      "type": "MODULE",
+      "description": "Credentialless live/bootleg FLAC via archive.org advancedsearch + metadata fan-out, with 4-byte fLaC check. Races Tidal so one slow host never defines the upgrade; holds tapers Tidal misses (Pure Hex lives, niche shoegaze).",
+      "tags": [
+        "ARCHIVE",
+        "LOSSLESS",
+        "FLAC",
+        "LIVE",
+        "NO LOGIN",
+        "NO ACCOUNT"
+      ],
+      "download": "modules/archive-flac.js",
+      "trusted": false,
+      "featured": true,
+      "lastUpdated": "2026-10-05"
     }
   ]
 }
